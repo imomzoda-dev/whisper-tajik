@@ -1,0 +1,8 @@
+{
+  "$comment": "Settings for the VoiceFlow AI build of each release (see .github/workflows/voiceflow-ggml.yml). Change them before publishing a release when the model's behaviour changes.",
+  "modelId": "tajik-small-q5_1",
+  "quantization": "q5_1",
+  "punctuation": true,
+  "minAppVersion": "1.0.7",
+  "baseTokenizer": "openai/whisper-small"
+}

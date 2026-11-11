@@ -11,6 +11,16 @@ asr = pipeline("automatic-speech-recognition", model="./whisper-small-tajik-v2",
 print(asr("audio.wav", generate_kwargs={"language": "tajik", "task": "transcribe"})["text"])
 ```
 
+### VoiceFlow AI (whisper.cpp)
+Для каждого опубликованного релиза GitHub Actions ([voiceflow-ggml.yml](.github/workflows/voiceflow-ggml.yml))
+сам конвертирует модель в ggml, квантует (q5_1), проверяет её в whisper.cpp и добавляет в релиз
+`ggml-tajik-small-q5_1.bin` и `voiceflow-model.json` (версия, размер, SHA-256).
+VoiceFlow AI читает `releases/latest/download/voiceflow-model.json` и обновляет таджикскую модель сам.
+
+Новый релиз: загрузите `whisper-small-tajik-*.zip` в релиз и опубликуйте его — остальное произойдёт автоматически
+(~15 мин). Если модель меняет поведение (например, перестаёт ставить пунктуацию), поправьте
+[.github/voiceflow.json](.github/voiceflow.json) до публикации.
+
 Дообучаем [abduaziz/whisper-small-tajik](https://huggingface.co/abduaziz/whisper-small-tajik)
 (Whisper Small, обучен только на FLEURS, ~8 ч) на большом наборе чистой таджикской речи
 **с заглавными буквами и пунктуацией**.

@@ -1,0 +1,162 @@
+# Builds the whisper.cpp (ggml) version of each model release for VoiceFlow AI.
+#
+# When a release is published with the Hugging Face model archive (whisper-small-tajik-*.zip),
+# this workflow converts it to ggml, quantises it, checks that whisper.cpp can run it, and adds
+# two files to the same release:
+#
+#   ggml-tajik-small-q5_1.bin   the model VoiceFlow AI downloads
+#   voiceflow-model.json        version, download URL, size and SHA-256 of that file
+#
+# VoiceFlow AI reads releases/latest/download/voiceflow-model.json and updates its Tajik model
+# on its own whenever a newer release appears. Settings: .github/voiceflow.json.
+# To rebuild an existing release: Actions → "ggml for VoiceFlow AI" → Run workflow → tag.
+name: ggml for VoiceFlow AI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build (e.g. v2.0)
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: voiceflow-ggml-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: true
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  GH_TOKEN: ${{ github.token }}
+  # Pinned tools: the same whisper.cpp the app downloads, and the mel filter bank from openai/whisper.
+  WHISPER_CPP_REF: v1.9.5
+  OPENAI_WHISPER_REF: v20240930
+
+jobs:
+  ggml:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Settings
+        id: cfg
+        run: |
+          set -euo pipefail
+          for k in modelId quantization punctuation minAppVersion baseTokenizer; do
+            echo "$k=$(jq -r ".$k" .github/voiceflow.json)" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Download the model archive
+        id: src
+        run: |
+          set -euo pipefail
+          mkdir -p work/src
+          asset=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '[.assets[] | select(.name | test("^whisper-.*\\.zip$"))][0].name')
+          [ -n "$asset" ] && [ "$asset" != "null" ] || { echo "::error::No whisper-*.zip in release $TAG"; exit 1; }
+          echo "Archive: $asset"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir work
+          digest=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq ".assets[] | select(.name==\"$asset\") | .digest")
+          actual="sha256:$(sha256sum "work/$asset" | cut -d' ' -f1)"
+          if [ -n "$digest" ] && [ "$digest" != "null" ]; then
+            [ "$digest" = "$actual" ] || { echo "::error::Checksum mismatch: $actual, GitHub says $digest"; exit 1; }
+            echo "Checksum OK ($actual)"
+          fi
+          unzip -q "work/$asset" -d work/src
+          dir=$(dirname "$(find work/src -name config.json -print -quit)")
+          [ -f "$dir/config.json" ] || { echo "::error::config.json not found in $asset"; exit 1; }
+          ls -la "$dir"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+
+      - name: Tokenizer files
+        run: |
+          set -euo pipefail
+          dir="${{ steps.src.outputs.dir }}"
+          base="${{ steps.cfg.outputs.baseTokenizer }}"
+          # Fine-tunes keep Whisper's tokenizer; the converter needs it as vocab.json + added_tokens.json.
+          for f in vocab.json added_tokens.json; do
+            if [ ! -f "$dir/$f" ]; then
+              echo "Taking $f from $base"
+              curl -fsSL --retry 3 "https://huggingface.co/$base/resolve/main/$f" -o "$dir/$f"
+            fi
+          done
+          base_vocab=$(curl -fsSL --retry 3 "https://huggingface.co/$base/resolve/main/config.json" | jq .vocab_size)
+          model_vocab=$(jq .vocab_size "$dir/config.json")
+          [ "$base_vocab" = "$model_vocab" ] || { echo "::error::vocab_size $model_vocab differs from $base ($base_vocab)"; exit 1; }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Python packages
+        run: |
+          pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet transformers safetensors numpy
+
+      - name: whisper.cpp and openai/whisper
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 --branch "$WHISPER_CPP_REF" https://github.com/ggml-org/whisper.cpp work/whisper.cpp
+          git clone --quiet --depth 1 --branch "$OPENAI_WHISPER_REF" https://github.com/openai/whisper work/openai-whisper
+          cmake -S work/whisper.cpp -B work/build -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_SDL2=OFF
+          cmake --build work/build --config Release -j "$(nproc)" --target whisper-cli whisper-quantize
+
+      - name: Convert to ggml and quantise
+        id: out
+        run: |
+          set -euo pipefail
+          mkdir -p work/out dist
+          python work/whisper.cpp/models/convert-h5-to-ggml.py "${{ steps.src.outputs.dir }}" work/openai-whisper work/out
+          file="ggml-tajik-small-${{ steps.cfg.outputs.quantization }}.bin"
+          work/build/bin/whisper-quantize work/out/ggml-model.bin "dist/$file" "${{ steps.cfg.outputs.quantization }}"
+          ls -la work/out dist
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+
+      - name: Check that whisper.cpp runs the model
+        run: |
+          set -euo pipefail
+          out=$(work/build/bin/whisper-cli -m "dist/${{ steps.out.outputs.file }}" -l tg -nt -np -f work/whisper.cpp/samples/jfk.wav)
+          echo "Output: $out"
+          OUT="$out" python -c 'import os, re, sys; sys.exit(0 if re.search("[Ѐ-ӿ]", os.environ["OUT"]) else 1)' \
+            || { echo "::error::The model produced no Cyrillic text"; exit 1; }
+
+      - name: Manifest
+        run: |
+          set -euo pipefail
+          file="${{ steps.out.outputs.file }}"
+          python - "$file" <<'PY'
+          import hashlib, json, os, sys, datetime
+          file = sys.argv[1]
+          path = os.path.join("dist", file)
+          sha = hashlib.sha256()
+          with open(path, "rb") as f:
+              for chunk in iter(lambda: f.read(1 << 20), b""):
+                  sha.update(chunk)
+          tag = os.environ["TAG"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          cfg = json.load(open(".github/voiceflow.json", encoding="utf8"))
+          manifest = {
+              "schema": 1,
+              "model": cfg["modelId"],
+              "version": tag.lstrip("vV"),
+              "tag": tag,
+              "repository": repo,
+              "file": file,
+              "url": f"https://github.com/{repo}/releases/download/{tag}/{file}",
+              "size": os.path.getsize(path),
+              "sha256": sha.hexdigest(),
+              "punctuation": bool(cfg["punctuation"]),
+              "minAppVersion": cfg["minAppVersion"],
+              "license": "Apache-2.0",
+              "builtAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+          }
+          json.dump(manifest, open("dist/voiceflow-model.json", "w", encoding="utf8"), indent=2)
+          print(json.dumps(manifest, indent=2))
+          PY
+
+      - name: Add to the release
+        run: gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber dist/*
