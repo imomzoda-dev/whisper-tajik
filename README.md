@@ -1,5 +1,16 @@
 # Whisper Tajik: дообучение
 
+## Скачать модель
+**[whisper-small-tajik-v2.zip](https://github.com/imomzoda-dev/whisper-tajik/releases/download/v2.0/whisper-small-tajik-v2.zip)**
+(446 МБ, fp16; SHA-256 `338b6332bde866ed6770cb2570a71aa3ffb50e4948d45e20a03fe045b97cfdb2`).
+Описание модели: [release/whisper-small-tajik-v2/README.md](release/whisper-small-tajik-v2/README.md).
+
+```python
+from transformers import pipeline
+asr = pipeline("automatic-speech-recognition", model="./whisper-small-tajik-v2", chunk_length_s=30)
+print(asr("audio.wav", generate_kwargs={"language": "tajik", "task": "transcribe"})["text"])
+```
+
 Дообучаем [abduaziz/whisper-small-tajik](https://huggingface.co/abduaziz/whisper-small-tajik)
 (Whisper Small, обучен только на FLEURS, ~8 ч) на большом наборе чистой таджикской речи
 **с заглавными буквами и пунктуацией**.
