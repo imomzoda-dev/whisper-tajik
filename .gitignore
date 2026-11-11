@@ -1,0 +1,11 @@
+# large or regenerable files: never commit
+.venv/
+data/
+models/
+release/**/model.safetensors
+release/*.zip
+logs_*
+results/smoke_*
+__pycache__/
+*.pyc
+.DS_Store
