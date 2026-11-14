@@ -1,5 +1,14 @@
 # Whisper Tajik: дообучение
 
+> ⚠️ **Устарело. Новая версия — [whisper-large-tajik](https://github.com/imomzoda-dev/whisper-large-tajik)
+> ([скачать v3.1](https://github.com/imomzoda-dev/whisper-large-tajik/releases/tag/v3.1)).**
+>
+> У модели v2 из этого репозитория две известные проблемы, исправленные в v3.1:
+> - на тишине и шуме она выдумывает текст (~56 слов на 10 секунд тишины; у v3.1 — 0);
+> - файлы токенизатора сохранены в формате transformers 5 и не открываются в transformers 4.x.
+>
+> v3.1 также точнее: FLEURS WER 15.48% → 14.43%, живая речь 38.55% → 36.74%, точки F1 94.1% → 95.0%.
+
 ## Скачать модель
 **[whisper-small-tajik-v2.zip](https://github.com/imomzoda-dev/whisper-tajik/releases/download/v2.0/whisper-small-tajik-v2.zip)**
 (446 МБ, fp16; SHA-256 `338b6332bde866ed6770cb2570a71aa3ffb50e4948d45e20a03fe045b97cfdb2`).
